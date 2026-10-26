@@ -1,34 +1,24 @@
 #!/usr/bin/env python3
 
 
+
 import torch
 import cv2
 import numpy as np
-import os
 import json
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import time
-import numpy as np
 import torchvision
 import sys
-sys.path.append(os.path.join(os.path.dirname(__file__),'../'))
 import os
+sys.path.append(os.path.join(os.path.dirname(__file__),'../'))
 from models.strand_codec import StrandCodec
 from models.rgb_to_material import RGB2MaterialModel
-import numpy as np
-import time
-import numpy as np
-from models.strand_codec import StrandCodec
 from utils.strand_util import sample_strands_from_scalp_with_density
 from utils.diffusion_utils import sample_images_cfg
-
-import torch
 import torch._dynamo
-import torchvision
-import sys
-import os
 from utils.vis_util import img_2_pca
 import torchvision.transforms as T
 import k_diffusion as K
@@ -52,7 +42,7 @@ class Mediapipe():
 
         base_options = python.BaseOptions(
             model_asset_path=os.path.join(SCRIPT_DIR,'./assets/face_landmarker.task'),
-            delegate=mp.tasks.BaseOptions.Delegate.GPU
+            delegate=mp.tasks.BaseOptions.Delegate.CPU
             )
         options = vision.FaceLandmarkerOptions(
                                         running_mode=mode,
@@ -209,17 +199,18 @@ def crop_face(image, face_landmarks, output_size, crop_size_multiplier=2.8):
 
 
 class DiffLocksInference():
-    def __init__(self, path_ckpt_strandcodec, path_config_difflocks, path_ckpt_difflocks, path_ckpt_rgb2material=None, cfg_val=1.0, nr_iters_denoise=100, nr_chunks_decode=50):
+    def __init__(self, path_ckpt_strandcodec, path_config_difflocks, path_ckpt_difflocks, path_ckpt_rgb2material=None, cfg_val=1.0, nr_iters_denoise=100, nr_chunks_decode=50, perf_monitor=None, slim_output=False):
         super(DiffLocksInference, self).__init__()
 
         self.nr_chunks_decode_strands=nr_chunks_decode
         self.nr_iters_denoise=nr_iters_denoise
         self.cfg_val=cfg_val
-
+        self.perf_monitor = perf_monitor
+        self.slim_output = slim_output
 
         self.mediapipe_img=Mediapipe(VisionRunningMode.IMAGE)
 
-        #create dinov2 
+        #create dinov2
         image_size=770 #nearest images size that divides cleanly by patch size 14
         self.dinov2_latents_preprocessor = T.Compose([
             T.Resize(image_size, interpolation=T.InterpolationMode.BICUBIC),
@@ -236,7 +227,6 @@ class DiffLocksInference():
                         dim_per_value_decoded=3).cuda()
         self.strand_codec.load_state_dict(torch.load(path_ckpt_strandcodec))
         self.strand_codec.eval()
-
 
         #difflocks diffusion
         config = K.config.load_config(path_config_difflocks)
@@ -267,10 +257,10 @@ class DiffLocksInference():
         else:
             self.rgb2material=None
 
-
         #hairsynth data
         self.normalization_dict=DiffLocksDataset.get_normalization_data()
         self.scalp_trimesh, self.scalp_mesh_data=DiffLocksDataset.compute_scalp_data(os.path.join(DEFAULT_BODY_DATA_DIR,"scalp.ply"))
+
 
     def rgb2hair(self, rgb_img, out_path=None):
         assert rgb_img.shape[1] == 3, "rgb_img needs to have 3 channels"
@@ -279,6 +269,8 @@ class DiffLocksInference():
         if out_path is not None:
             os.makedirs(out_path,exist_ok=True)
 
+        if self.perf_monitor:
+            self.perf_monitor.start_step("Face Landmark Detection")
 
         #run mediapipe on it
         #from BCHW to HW3
@@ -290,6 +282,10 @@ class DiffLocksInference():
             #there was no face detected, there is nothing to do
             return None
         frame=crop_face(frame, face_landmarks, output_size=770)
+
+        if self.perf_monitor:
+            self.perf_monitor.end_step()
+            self.perf_monitor.start_step("DINOv2 Feature Extraction")
 
         #back to tensor
         img_tensor = torch.tensor(frame).cuda()
@@ -321,13 +317,16 @@ class DiffLocksInference():
                                     "final_latent": patch_embeddings_reshaped,
                                     }
         
+        if self.perf_monitor:
+            self.perf_monitor.end_step()
+            self.perf_monitor.start_step("Scalp Texture Diffusion")
 
         #run diffusion
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16): #we need this because flash attention only works with float16 and bfloat16
             scalp_texture = sample_images_cfg(1, cfg_val=self.cfg_val, cfg_interval=[0.0, 5.0], model_ema=self.model_ema, model_config=self.model_config, nr_iters=self.nr_iters_denoise, extra_args=extra_args)
         scalp_texture=scalp_texture.float()
         scalp_texture_orig=scalp_texture
-        if out_path:
+        if out_path and not self.slim_output:
             np.savez(os.path.join(out_path, "scalp_texture.npz"), scalp_texture=scalp_texture_orig.cpu().numpy())
         print("scalp_texture", scalp_texture.shape)
         scalp_texture = scalp_texture_orig[:,0:-1,:,:] #get only the scalp texture part
@@ -340,12 +339,19 @@ class DiffLocksInference():
         density_map=density_map.clamp(0, 1)
         density_map[density_map<0.02]=0.0 #low density areas just set them to 0
 
+        if self.perf_monitor:
+            self.perf_monitor.end_step()
+            self.perf_monitor.start_step("Strand Sampling & Decoding")
+
         #increase density
         # density_map[density_map>0.02]+=1.0
         
 
         strand_points_world, strand_points_tbn = sample_strands_from_scalp_with_density(scalp_texture, density_map, self.strand_codec, normalization_dict=self.normalization_dict, scalp_mesh_data=self.scalp_mesh_data, tbn_space_to_world_func=tbn_space_to_world, nr_chunks=self.nr_chunks_decode_strands, upsample_multiplier=3)
 
+        if self.perf_monitor:
+            self.perf_monitor.end_step()
+            self.perf_monitor.start_step("Material Prediction")
 
         #get also material
         hair_material_dict=None
@@ -355,7 +361,7 @@ class DiffLocksInference():
             hair_material_dict = self.rgb2material(rgb2mat_input_dict)
 
             #save material
-            if out_path:
+            if out_path and not self.slim_output:
                 data={}
                 if hair_material_dict is not None:
                     melanin=hair_material_dict["melanin"].item()
@@ -373,13 +379,17 @@ class DiffLocksInference():
                 with open(path_json, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=4)
         
-        if out_path:
+        if out_path and not self.slim_output:
             npz_out_path=os.path.join(out_path, "difflocks_output_strands.npz")
             np.savez(npz_out_path, positions=strand_points_world.cpu().numpy())
 
         #save also img
-        if out_path:
+        if out_path and not self.slim_output:
             torchvision.utils.save_image(rgb_img, os.path.join(out_path, "rgb.png"))
+
+        if self.perf_monitor:
+            self.perf_monitor.end_step()
+
 
         return strand_points_world, hair_material_dict
 

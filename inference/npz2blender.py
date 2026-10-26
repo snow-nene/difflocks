@@ -102,7 +102,7 @@ def export_alembic(out_alembic_path, resolution):
 
 
 
-    bpy.ops.wm.alembic_export(filepath=out_alembic_path, check_existing=False, start=1, end=1,selected=True, visible_objects_only=True, uvs=False, packuv=False, normals=False, use_instancing=False, global_scale=1.0, export_hair=True, export_particles=False, as_background_job=False, evaluation_mode='VIEWPORT', init_scene_frame_range=True)
+    bpy.ops.wm.alembic_export(filepath=out_alembic_path, start=1, end=1, selected=True, uvs=False, packuv=False, normals=False, use_instancing=False, global_scale=1.0, export_hair=True, export_particles=False, as_background_job=False, evaluation_mode='VIEWPORT', init_scene_frame_range=True)
 
 
 
@@ -228,4 +228,3 @@ def main():
    
 if __name__ == '__main__':
     main() 
-

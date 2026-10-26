@@ -8,6 +8,10 @@
 
 This repository contains official inference and training code for DiffLocks, which creates strand-based realistic hairstyle from a single image. It also contains the DiffLocks dataset consisting of 40K 3D synthetic strand-based hair data generated in Blender.
 
+## Environment setup
+
+The optional Pixi environment is defined in `pixi.toml` and targets Linux x86_64 with CUDA 12.4. See [QUICK_START_PIXI.md](QUICK_START_PIXI.md) for setup instructions.
+
 ## Requirements 
 
 DiffLocks dependencies can be installed from the provided `requirements.txt` which can be installed in a virtual environment: 
@@ -19,7 +23,7 @@ DiffLocks dependencies can be installed from the provided `requirements.txt` whi
 Afterwards we need to install custom CUDA kernels for the diffusion model:
 * [NATTEN](https://github.com/SHI-Labs/NATTEN/tree/main) for the sparse (neighborhood) attention used at low levels of the hierarchy.
 * [FlashAttention-2](https://github.com/Dao-AILab/flash-attention) for global attention.
-Please double check that you install Natten for torch 2.5.0 (as per requierments.txt).
+Install NATTEN and FlashAttention builds compatible with the PyTorch and CUDA versions in your environment.
 
 Finally if you want to perform inference, you need to download the checkpoints for the trained models. 
 The pretrained checkpoints can be downloaded by following [this section](#download-pretrained-checkpoints):
@@ -56,6 +60,8 @@ To run inference on an RGB and create 3D strands use:
     $ ./inference_difflocks.py \
 		--img_path=./samples/medium_11.png \
 		--out_path=./outputs_inference/ 
+
+Performance and memory reporting can be enabled with `--enable_monitoring`. Inference also writes a compact `hair_binary.data` export; use `--max_num_strands` to set its strand limit. See [PERFORMANCE_MONITORING.md](PERFORMANCE_MONITORING.md).
 
 You also have options to export a `.blend` file and an alembic file by specifying `--blender_path` and `--export_alembic` in the above script. 
 Note that the blender path corresponds to the blender executable with version 4.1.1. It will likely not work with other versions. 
@@ -99,12 +105,15 @@ followed by pre-pending `accelerate launch` to the previous training script:
 
 You would probably to adjust the `batch-size` and `grad-accum-step` depending on the number of GPUs you have. 
 
+## Performance reports
 
+Inference-time reporting and the Pixi setup are documented in [PERFORMANCE_MONITORING.md](PERFORMANCE_MONITORING.md) and [QUICK_START_PIXI.md](QUICK_START_PIXI.md).
 
- 
+## References
 
-
-
-
-
+- DiffLocks Paper: https://arxiv.org/abs/2505.06166
+- Project Page: https://radualexandru.github.io/difflocks/
+- NATTEN: https://github.com/SHI-Labs/NATTEN
+- FlashAttention-2: https://github.com/Dao-AILab/flash-attention
+- Pixi Package Manager: https://pixi.sh/
 
