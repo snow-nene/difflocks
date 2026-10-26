@@ -1,3 +1,21 @@
 /outputs_inference/
 /performance_reports/
 *.data
+
+# Local environment, model and experiment artifacts
+*.whl
+*.pyc
+__pycache__/
+.idea/
+/checkpoints/
+/output/
+/render/
+/resnet50/
+/submodules/
+/Matte-Anything/
+/process_failure.log
+/samples/bianzi.png
+/samples/blow.png
+/batch_infer.sh
+/train_hair_optimization.py
+/utils/compare.py
